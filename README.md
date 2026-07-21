@@ -79,13 +79,21 @@ so compatibility and performance vary by game, operating system, and GPU driver.
 ## Using
 
 Download the release archive for your operating system, extract it, and launch
-SharpEmu with the path to a legally obtained game's `eboot.bin`.
+SharpEmu with the path to a legally obtained game's `eboot.bin` or a game folder
+stored as a ZArchive `.zar` file. ZArchive games are extracted to SharpEmu's local
+cache on first launch and reused while the source archive remains unchanged.
 
 Windows PowerShell:
 
 ```powershell
 .\SharpEmu.exe "C:\path\to\game\eboot.bin" 2>&1 |
   Tee-Object -FilePath "SharpEmu.log"
+```
+
+For a ZArchive game, pass the archive itself:
+
+```powershell
+.\SharpEmu.exe "C:\path\to\game.zar"
 ```
 
 Linux and macOS:

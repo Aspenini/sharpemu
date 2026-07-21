@@ -12,6 +12,7 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SharpEmu.Core;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE.Host;
@@ -1151,14 +1152,17 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                if (game.CoverPath is null)
+                if (!game.HasCoverSource)
                 {
                     continue;
                 }
 
                 try
                 {
-                    using var stream = File.OpenRead(game.CoverPath);
+                    using var stream = OpenGameImage(
+                        game,
+                        game.CoverPath,
+                        game.CoverArchiveEntryPath);
                     var bitmap = Bitmap.DecodeToWidth(stream, 312);
                     Dispatcher.UIThread.Post(() =>
                     {
@@ -1197,11 +1201,23 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Totals the size of the game's install folder (the directory holding
-    /// the eboot), which is far more accurate than the eboot alone.
+    /// Totals the size of the game's install folder, or returns the compressed
+    /// size when the library entry is a ZArchive.
     /// </summary>
     private static long ComputeInstallSize(string ebootPath)
     {
+        if (ZArchiveGame.IsArchivePath(ebootPath))
+        {
+            try
+            {
+                return new FileInfo(ebootPath).Length;
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+
         var directory = Path.GetDirectoryName(ebootPath);
         if (directory is null)
         {
@@ -1249,8 +1265,15 @@ public partial class MainWindow : Window
 
             try
             {
-                foreach (var file in Directory.EnumerateFiles(folder, "eboot.bin", enumeration))
+                foreach (var file in Directory.EnumerateFiles(folder, "*", enumeration))
                 {
+                    var isArchive = ZArchiveGame.IsArchivePath(file);
+                    if (!isArchive &&
+                        !string.Equals(Path.GetFileName(file), "eboot.bin", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
                     var fullPath = Path.GetFullPath(file);
                     if (!seen.Add(fullPath) || excludedPaths.Contains(fullPath))
                     {
@@ -1266,10 +1289,36 @@ public partial class MainWindow : Window
                     {
                     }
 
-                    var (title, titleId, version) = TryReadParamJson(fullPath);
+                    (string? Title, string? TitleId, string? Version) metadata;
+                    ZArchiveGameInfo? archiveInfo = null;
+                    if (isArchive)
+                    {
+                        try
+                        {
+                            archiveInfo = ZArchiveGame.Inspect(fullPath);
+                            metadata = TryParseParamJson(archiveInfo.ParamJson);
+                        }
+                        catch (Exception)
+                        {
+                            // Invalid archives are not launchable, so leave them out of the library.
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        metadata = TryReadParamJson(fullPath);
+                    }
+
                     games.Add(new GameEntry(
-                        title ?? GameNameFor(fullPath), titleId, version, fullPath, size,
-                        FindCoverFor(fullPath), FindBackgroundFor(fullPath)));
+                        metadata.Title ?? GameNameFor(fullPath),
+                        metadata.TitleId,
+                        metadata.Version,
+                        fullPath,
+                        size,
+                        isArchive ? null : FindCoverFor(fullPath),
+                        isArchive ? null : FindBackgroundFor(fullPath),
+                        archiveInfo?.CoverEntryPath,
+                        archiveInfo?.BackgroundEntryPath));
                 }
             }
             catch (Exception)
@@ -1302,9 +1351,25 @@ public partial class MainWindow : Window
                 return (null, null, null);
             }
 
-            // ReadAllText handles a UTF-8 BOM, which JsonDocument rejects in
-            // raw bytes.
-            using var document = JsonDocument.Parse(File.ReadAllText(paramPath));
+            // ReadAllText handles a UTF-8 BOM, which JsonDocument rejects in raw bytes.
+            return TryParseParamJson(File.ReadAllText(paramPath));
+        }
+        catch (Exception)
+        {
+            return (null, null, null);
+        }
+    }
+
+    private static (string? Title, string? TitleId, string? Version) TryParseParamJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return (null, null, null);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
 
             string? titleId = null;
@@ -1418,6 +1483,11 @@ public partial class MainWindow : Window
 
     private static string GameNameFor(string ebootPath)
     {
+        if (ZArchiveGame.IsArchivePath(ebootPath))
+        {
+            return Path.GetFileNameWithoutExtension(ebootPath);
+        }
+
         var directory = Path.GetDirectoryName(ebootPath);
         var name = directory is not null ? Path.GetFileName(directory) : null;
         return string.IsNullOrEmpty(name) ? Path.GetFileName(ebootPath) : name;
@@ -1706,7 +1776,7 @@ public partial class MainWindow : Window
             }
         }
 
-        if (game?.BackgroundPath is null)
+        if (game is null || !game.HasBackgroundSource)
         {
             ShowDefaultBackdrop();
             return;
@@ -1716,10 +1786,12 @@ public partial class MainWindow : Window
         {
             try
             {
-                var path = game.BackgroundPath;
                 game.Background = await Task.Run(() =>
                 {
-                    using var stream = File.OpenRead(path);
+                    using var stream = OpenGameImage(
+                        game,
+                        game.BackgroundPath,
+                        game.BackgroundArchiveEntryPath);
                     return Bitmap.DecodeToWidth(stream, 1600);
                 });
             }
@@ -1737,6 +1809,25 @@ public partial class MainWindow : Window
         }
     }
 
+    private static Stream OpenGameImage(
+        GameEntry game,
+        string? physicalPath,
+        string? archiveEntryPath)
+    {
+        if (physicalPath is not null)
+        {
+            return File.OpenRead(physicalPath);
+        }
+        if (archiveEntryPath is not null && ZArchiveGame.IsArchivePath(game.Path))
+        {
+            return new MemoryStream(
+                ZArchiveGame.ReadEntryBytes(game.Path, archiveEntryPath),
+                writable: false);
+        }
+
+        throw new FileNotFoundException("The game image was not found.");
+    }
+
     // ---- Launching ----
 
     private async Task OpenFileAsync()
@@ -1748,7 +1839,7 @@ public partial class MainWindow : Window
             FileTypeFilter = new[]
             {
                 new FilePickerFileType(Localization.Instance.Get("Dialog.PsExecutables"))
-                    { Patterns = new[] { "eboot.bin", "*.bin", "*.self", "*.elf" } },
+                    { Patterns = new[] { "eboot.bin", "*.bin", "*.self", "*.elf", "*.zar" } },
                 FilePickerFileTypes.All,
             },
         });

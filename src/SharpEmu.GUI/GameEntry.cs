@@ -30,7 +30,8 @@ public sealed class GameEntry : INotifyPropertyChanged
 
     public GameEntry(
         string name, string? titleId, string? version, string path, long sizeBytes,
-        string? coverPath, string? backgroundPath)
+        string? coverPath, string? backgroundPath,
+        string? coverArchiveEntryPath = null, string? backgroundArchiveEntryPath = null)
     {
         Name = name;
         TitleId = titleId;
@@ -39,6 +40,8 @@ public sealed class GameEntry : INotifyPropertyChanged
         _sizeBytes = sizeBytes;
         CoverPath = coverPath;
         BackgroundPath = backgroundPath;
+        CoverArchiveEntryPath = coverArchiveEntryPath;
+        BackgroundArchiveEntryPath = backgroundArchiveEntryPath;
         Initials = ComputeInitials(name);
     }
 
@@ -79,6 +82,16 @@ public sealed class GameEntry : INotifyPropertyChanged
 
     /// <summary>Path to the key art (pic0/pic1) shipped with the game, if found.</summary>
     public string? BackgroundPath { get; }
+
+    /// <summary>Cover-art entry inside <see cref="Path"/> when the game is a ZArchive.</summary>
+    public string? CoverArchiveEntryPath { get; }
+
+    /// <summary>Backdrop entry inside <see cref="Path"/> when the game is a ZArchive.</summary>
+    public string? BackgroundArchiveEntryPath { get; }
+
+    public bool HasCoverSource => CoverPath is not null || CoverArchiveEntryPath is not null;
+
+    public bool HasBackgroundSource => BackgroundPath is not null || BackgroundArchiveEntryPath is not null;
 
     /// <summary>
     /// Decoded key art used as the window backdrop while this game is

@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.Core;
 using SharpEmu.Core.Runtime;
 using SharpEmu.Core.Cpu;
 using SharpEmu.GUI;
@@ -253,8 +254,24 @@ internal static partial class Program
 
         if (!File.Exists(ebootPath))
         {
-            Log.Error($"EBOOT file was not found: {ebootPath}");
+            Log.Error($"Game executable or archive was not found: {ebootPath}");
             return 2;
+        }
+
+        if (ZArchiveGame.IsArchivePath(ebootPath))
+        {
+            var archivePath = ebootPath;
+            try
+            {
+                Log.Info($"Loading ZArchive game: {archivePath}");
+                ebootPath = ZArchiveGame.ExtractToCache(archivePath);
+                Log.Info($"ZArchive game is available at: {Path.GetDirectoryName(ebootPath)}");
+            }
+            catch (Exception exception)
+            {
+                Log.Error($"Could not load ZArchive game '{archivePath}'.", exception);
+                return 2;
+            }
         }
 
         if (!TryGetDebugServerOptions(args, out var debugServerEnabled, out var debugServerOptions, out var debugServerError))
@@ -747,6 +764,25 @@ internal static partial class Program
 
         try
         {
+            if (ZArchiveGame.IsArchivePath(ebootPath))
+            {
+                var archiveInfo = ZArchiveGame.Inspect(ebootPath);
+                if (string.IsNullOrWhiteSpace(archiveInfo.ParamJson))
+                {
+                    return null;
+                }
+
+                using var archiveDocument = JsonDocument.Parse(archiveInfo.ParamJson);
+                if (archiveDocument.RootElement.TryGetProperty("titleId", out var archiveTitleId) &&
+                    archiveTitleId.ValueKind == JsonValueKind.String)
+                {
+                    var value = archiveTitleId.GetString();
+                    return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                }
+
+                return null;
+            }
+
             var directory = Path.GetDirectoryName(Path.GetFullPath(ebootPath));
             if (string.IsNullOrEmpty(directory))
             {
@@ -1025,8 +1061,8 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--debug-server[=host:port]] <path-to-eboot.bin>");
-        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--debug-server[=host:port]] <path-to-eboot.bin-or-game.zar>");
+        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\game.zar""");
         Log.Info("Debug server: --debug-server starts a live debug listener (default 127.0.0.1:5714); connect with SharpEmu.DebugClient.");
     }
 
